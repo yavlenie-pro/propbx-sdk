@@ -72,6 +72,13 @@ class ProPBX extends events_1.default {
             this.removeCall(message.callID);
             return;
         }
+        if (event === events_2.WS_EVENTS.CALL_FINISHED) {
+            call.isConnected = false;
+            this.emit(event, call, message.params);
+            call.processEvent(event, message.params, message);
+            this.removeCall(message.callID);
+            return;
+        }
         this.emit(event, call, message.params);
         call.processEvent(event, message.params, message);
         if (event === events_2.WS_EVENTS.PING)
