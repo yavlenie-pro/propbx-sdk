@@ -21,6 +21,7 @@ class ProPBX extends events_1.default {
         this.pingEnable = pingEnable;
         this.calls = {};
         this.callTimers = {};
+        this.finishedCalls = new Set();
         this.setMaxListeners(maxListeners);
         this.pingEnable = this.config.pingEnable;
     }
@@ -57,6 +58,9 @@ class ProPBX extends events_1.default {
         const { event } = message;
         let call = this.getCall(message.callID);
         if (!call) {
+            if (this.finishedCalls.has(message.callID)) {
+                return;
+            }
             call = new call_1.default(message.callID, this.ws, message.params);
             this.calls[message.callID] = call;
         }
@@ -128,6 +132,7 @@ class ProPBX extends events_1.default {
         for (const callId of Object.keys(this.calls)) {
             this.removeCall(callId);
         }
+        this.finishedCalls.clear();
         if (this.config.disableReconnect !== true) {
             setTimeout(() => this.connect(), this.reconnectTimeout);
         }
@@ -155,6 +160,7 @@ class ProPBX extends events_1.default {
             delete this.callTimers[callId];
         }
         if (this.calls[callId]) {
+            this.finishedCalls.add(callId);
             this.calls[callId].removeAllListeners();
             delete this.calls[callId];
             return true;
