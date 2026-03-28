@@ -1,0 +1,24 @@
+{
+  "name": "propbx-sdk",
+  "version": "1.0.0",
+  "description": "ProPBX SDK library",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "propbx-sdk"
+  ],
+  "author": "Yavlenie Pro",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yavlenie-pro/propbx-sdk.git"
+  },
+  "dependencies": {
+    "md5": "^2.3.0",
+    "mime": "^2.5.2",
+    "uuid": "^8.3.2",
+    "ws": "^7.4.6"
+  }
+}
