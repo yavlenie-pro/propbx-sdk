@@ -1,4 +1,4 @@
-import { Variable } from './types';
+import { Variable, VadConfig } from './types';
 export declare const ACTIONS: {
     PONG: string;
     AUTH: string;
@@ -186,7 +186,7 @@ export declare function stopPlayback(playbackID: string | number): {
         playbackID: string | number;
     };
 };
-export declare function startSpeechRecognition(sessionID: string | number, provider: any, language: any, grammar: any, timeout: any): {
+export declare function startSpeechRecognition(sessionID: string | number, provider: any, language: any, grammar: any, timeout: any, vad?: VadConfig): {
     action: string;
     params: {
         provider: any;
@@ -194,14 +194,16 @@ export declare function startSpeechRecognition(sessionID: string | number, provi
         grammar: any;
         timeout: any;
         sessionID: string | number;
+        vad?: VadConfig;
     };
 };
-export declare function startSpeechRecognitionWithCustomConfig(sessionID: string | number, provider: string, config: any): {
+export declare function startSpeechRecognitionWithCustomConfig(sessionID: string | number, provider: string, config: any, vad?: VadConfig): {
     action: string;
     params: {
         provider: string;
         customConfig: any;
         sessionID: string | number;
+        vad?: VadConfig;
     };
 };
 export declare function stopSpeechRecognition(sessionID: string | number): {

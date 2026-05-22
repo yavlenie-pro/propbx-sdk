@@ -206,27 +206,35 @@ function stopPlayback(playbackID) {
     };
 }
 exports.stopPlayback = stopPlayback;
-function startSpeechRecognition(sessionID, provider, language, grammar, timeout) {
+function startSpeechRecognition(sessionID, provider, language, grammar, timeout, vad) {
+    const params = {
+        provider,
+        language,
+        grammar,
+        timeout,
+        sessionID,
+    };
+    if (vad) {
+        params.vad = vad;
+    }
     return {
         action: exports.ACTIONS.START_SPEECH_RECOGNITION,
-        params: {
-            provider,
-            language,
-            grammar,
-            timeout,
-            sessionID,
-        },
+        params,
     };
 }
 exports.startSpeechRecognition = startSpeechRecognition;
-function startSpeechRecognitionWithCustomConfig(sessionID, provider, config) {
+function startSpeechRecognitionWithCustomConfig(sessionID, provider, config, vad) {
+    const params = {
+        provider,
+        customConfig: config,
+        sessionID,
+    };
+    if (vad) {
+        params.vad = vad;
+    }
     return {
         action: exports.ACTIONS.START_SPEECH_RECOGNITION_CUSTOM,
-        params: {
-            provider,
-            customConfig: config,
-            sessionID,
-        },
+        params,
     };
 }
 exports.startSpeechRecognitionWithCustomConfig = startSpeechRecognitionWithCustomConfig;

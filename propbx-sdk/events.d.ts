@@ -27,6 +27,7 @@ export declare const APP_EVENTS: {
     CALL_DISCONNECTED: string;
     PLAYBACK_FINISHED: string;
     SPEECH_RECOGNITION_TIMEOUT: string;
+    SPEECH_RECOGNITION_EOU: string;
     TRANSCRIBE: string;
     VARIABLES_SET: string;
     VARIABLES_DELETE: string;
@@ -39,6 +40,7 @@ export declare const WS_CALL_EVENTS: {
     RECORDING_COMPLETE: string;
     TRANSCRIBE: string;
     SPEECH_RECOGNITION_TIMEOUT: string;
+    SPEECH_RECOGNITION_EOU: string;
     PLAYBACK_FINISHED: string;
     CALL_DISCONNECTED: string;
     VARIABLES_SET: string;

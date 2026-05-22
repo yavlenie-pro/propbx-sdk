@@ -5,6 +5,7 @@ import InfobotPlayback from './playback';
 import InfobotRecording from './recording';
 import InfobotRecognitionSession from './recognition';
 import InfobotVariables from './variables';
+import { VadConfig } from './types';
 export default class ProPBXCall extends EventEmitter {
     id: string;
     private ws;
@@ -33,15 +34,17 @@ export default class ProPBXCall extends EventEmitter {
     say(text: string, params: any, ssml: any): InfobotPlayback;
     playURL(url: string): InfobotPlayback;
     playFile(path: string): InfobotPlayback;
-    startSpeechRecognition({ provider, language, grammar, timeout }: {
+    startSpeechRecognition({ provider, language, grammar, timeout, vad }: {
         provider: any;
         language: any;
         grammar: any;
         timeout: any;
+        vad?: VadConfig;
     }): InfobotRecognitionSession;
-    startSpeechRecognitionWithCustomConfig({ provider, config }: {
+    startSpeechRecognitionWithCustomConfig({ provider, config, vad }: {
         provider: any;
         config: any;
+        vad?: VadConfig;
     }): InfobotRecognitionSession;
     stopSpeechRecognition(): InfobotRecognitionSession;
     startAudioRecord(format: any): InfobotRecording;

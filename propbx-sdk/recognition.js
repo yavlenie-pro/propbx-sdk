@@ -27,23 +27,32 @@ class ProPBXSpeechRecognition extends events_1.default {
                 return;
             this.emit(events_2.APP_EVENTS.TRANSCRIBE, message);
         };
+        this._onEou = (message) => {
+            if (message.sessionID !== this.id)
+                return;
+            this.emit(events_2.APP_EVENTS.SPEECH_RECOGNITION_EOU, message);
+            this.destroy();
+        };
         this.call.on(events_2.WS_CALL_EVENTS.SPEECH_RECOGNITION_TIMEOUT, this._onTimeout);
         this.call.on(events_2.WS_CALL_EVENTS.TRANSCRIBE, this._onTranscribe);
+        this.call.on(events_2.WS_CALL_EVENTS.SPEECH_RECOGNITION_EOU, this._onEou);
     }
     destroy() {
         if (this._onTimeout) {
             this.call.off(events_2.WS_CALL_EVENTS.SPEECH_RECOGNITION_TIMEOUT, this._onTimeout);
             this.call.off(events_2.WS_CALL_EVENTS.TRANSCRIBE, this._onTranscribe);
+            this.call.off(events_2.WS_CALL_EVENTS.SPEECH_RECOGNITION_EOU, this._onEou);
             this._onTimeout = null;
             this._onTranscribe = null;
+            this._onEou = null;
         }
     }
-    startSpeechRecognition(provider, language, grammar, timeout) {
-        this.call.send(actions_1.startSpeechRecognition(this.id, provider, language, grammar, timeout));
+    startSpeechRecognition(provider, language, grammar, timeout, vad) {
+        this.call.send(actions_1.startSpeechRecognition(this.id, provider, language, grammar, timeout, vad));
         return this;
     }
-    startSpeechRecognitionWithCustomConfig(provider, config) {
-        this.call.send(actions_1.startSpeechRecognitionWithCustomConfig(this.id, provider, config));
+    startSpeechRecognitionWithCustomConfig(provider, config, vad) {
+        this.call.send(actions_1.startSpeechRecognitionWithCustomConfig(this.id, provider, config, vad));
         return this;
     }
     stopSpeechRecognition() {

@@ -117,14 +117,14 @@ class ProPBXCall extends events_1.default {
         playback.playFile(path);
         return playback;
     }
-    startSpeechRecognition({ provider, language, grammar, timeout }) {
+    startSpeechRecognition({ provider, language, grammar, timeout, vad }) {
         const recognitionSession = new recognition_1.default(this);
-        recognitionSession.startSpeechRecognition(provider, language, grammar, timeout);
+        recognitionSession.startSpeechRecognition(provider, language, grammar, timeout, vad);
         return recognitionSession;
     }
-    startSpeechRecognitionWithCustomConfig({ provider, config }) {
+    startSpeechRecognitionWithCustomConfig({ provider, config, vad }) {
         const recognitionSession = new recognition_1.default(this);
-        recognitionSession.startSpeechRecognitionWithCustomConfig(provider, config);
+        recognitionSession.startSpeechRecognitionWithCustomConfig(provider, config, vad);
         return recognitionSession;
     }
     stopSpeechRecognition() {
