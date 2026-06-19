@@ -75,6 +75,37 @@ test('toClientMessage: missing params is tolerated', () => {
     assert.deepEqual(m.params, {});
 });
 
+test('toClientMessage: flattens a raw google.protobuf.Struct wrapper into plain params', () => {
+    // The shape @grpc/proto-loader hands back for a Struct field. Without
+    // flattening, call.params.message_id / caller_number land on the wrapper and
+    // read as undefined ("reads in the wrong place").
+    const m = toClientMessage({
+        type: 'incomingCall',
+        call_id: 'c1',
+        params: {
+            fields: {
+                message_id: { kind: 'stringValue', stringValue: 'c1' },
+                caller_number: { kind: 'stringValue', stringValue: '79991234567' },
+                called_number: { kind: 'stringValue', stringValue: '74950000000' },
+                direction: { kind: 'stringValue', stringValue: 'inbound' },
+                headers: {
+                    kind: 'structValue',
+                    structValue: { fields: { 'X-foo': { kind: 'stringValue', stringValue: 'bar' } } },
+                },
+            },
+        },
+    });
+    assert.equal(m.event, 'incomingCall');
+    assert.equal(m.callID, 'c1');
+    assert.deepEqual(m.params, {
+        message_id: 'c1',
+        caller_number: '79991234567',
+        called_number: '74950000000',
+        direction: 'inbound',
+        headers: { 'X-foo': 'bar' },
+    });
+});
+
 // ---- struct sanitization ----
 
 test('sanitizeForStruct: strips undefined, keeps null, recurses', () => {

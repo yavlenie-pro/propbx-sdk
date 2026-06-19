@@ -47,3 +47,47 @@ export function sanitizeForStruct(value: any): any {
     // function, symbol, undefined -> dropped
     return undefined;
 }
+
+/**
+ * Decode a value that may be a raw `google.protobuf.Struct` / `Value` wrapper
+ * into a plain JS object. @grpc/proto-loader hands the `params` field back as the
+ * wire shape — e.g. `{ fields: { caller_number: { kind: 'stringValue',
+ * stringValue: '79991234567' } } }` — but the v1 message handlers (and apps) read
+ * `call.params` as a flat object (`params.message_id`, `params.caller_number`,
+ * ...). Without flattening, those reads land on the wrapper instead of the value
+ * ("reads in the wrong place") and come back undefined.
+ *
+ * Idempotent: an already-plain object passes through unchanged, so this is safe
+ * whether or not proto-loader flattened the Struct itself.
+ */
+export function structToPlain(v: any): any {
+    if (v == null || typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.map(structToPlain);
+
+    // google.protobuf.Value (loaded with oneofs:true -> a `kind` discriminator)
+    if (typeof v.kind === 'string') {
+        switch (v.kind) {
+            case 'stringValue': return v.stringValue;
+            case 'numberValue': return v.numberValue;
+            case 'boolValue': return v.boolValue;
+            case 'nullValue': return null;
+            case 'structValue': return structToPlain(v.structValue);
+            case 'listValue': return structToPlain(v.listValue?.values ?? []);
+        }
+    }
+
+    // google.protobuf.Struct
+    if (v.fields && typeof v.fields === 'object') {
+        const out: Record<string, any> = {};
+        for (const k of Object.keys(v.fields)) out[k] = structToPlain(v.fields[k]);
+        return out;
+    }
+
+    // google.protobuf.ListValue
+    if (Array.isArray(v.values)) return v.values.map(structToPlain);
+
+    // Already a plain object — recurse defensively (idempotent pass-through).
+    const out: Record<string, any> = {};
+    for (const k of Object.keys(v)) out[k] = structToPlain(v[k]);
+    return out;
+}
