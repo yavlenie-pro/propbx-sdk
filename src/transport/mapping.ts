@@ -2,7 +2,7 @@
  * Pure translation between the v1 message shapes and the gRPC frames. Kept
  * separate from the transport so the rules can be unit-tested without a network.
  */
-import { sanitizeForStruct, structToPlain } from './struct';
+import { sanitizeForStruct, structToPlain, plainToStruct } from './struct';
 
 /**
  * v1 action object -> gRPC Action fields. The server reconstructs the v1 message
@@ -14,7 +14,7 @@ export function toActionFrame(data: any): { type: string; call_id: string; param
     return {
         type: action,
         call_id: callID ?? '',
-        params: sanitizeForStruct(rest),
+        params: plainToStruct(sanitizeForStruct(rest)),
     };
 }
 

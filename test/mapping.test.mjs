@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { toActionFrame, toClientMessage } from '../dist/transport/mapping.js';
-import { sanitizeForStruct } from '../dist/transport/struct.js';
+import { sanitizeForStruct, structToPlain } from '../dist/transport/struct.js';
 
 // ---- send: v1 action object -> gRPC Action ----
 
@@ -9,21 +9,21 @@ test('toActionFrame: simple action hoists callID to call_id', () => {
     const f = toActionFrame({ action: 'answer', callID: 'call-1' });
     assert.equal(f.type, 'answer');
     assert.equal(f.call_id, 'call-1');
-    assert.deepEqual(f.params, {});
+    assert.deepEqual(structToPlain(f.params), {});
 });
 
 test('toActionFrame: tts keeps nested params, strips action/callID and undefined', () => {
     const f = toActionFrame({ action: 'tts', callID: 'c1', params: { text: 'hi', playbackID: 'p1', ssml: undefined } });
     assert.equal(f.type, 'tts');
     assert.equal(f.call_id, 'c1');
-    assert.deepEqual(f.params, { params: { text: 'hi', playbackID: 'p1' } });
+    assert.deepEqual(structToPlain(f.params), { params: { text: 'hi', playbackID: 'p1' } });
 });
 
 test('toActionFrame: make-call keeps top-level `to` and nested params; no top-level callID', () => {
     const f = toActionFrame({ action: 'make-call', to: '123', params: { number: '123', appID: 'app', callID: 'mc1' } });
     assert.equal(f.type, 'make-call');
     assert.equal(f.call_id, '');
-    assert.deepEqual(f.params, { to: '123', params: { number: '123', appID: 'app', callID: 'mc1' } });
+    assert.deepEqual(structToPlain(f.params), { to: '123', params: { number: '123', appID: 'app', callID: 'mc1' } });
 });
 
 test('toActionFrame: send-sms folds all top-level fields into params', () => {
@@ -39,14 +39,14 @@ test('toActionFrame: send-sms folds all top-level fields into params', () => {
     });
     assert.equal(f.type, 'send-sms');
     assert.equal(f.call_id, 'call-9');
-    assert.deepEqual(f.params, { to: '79991234567', text: 'hi', from: 'X', digital: 1, short: 0, id: 's1' });
+    assert.deepEqual(structToPlain(f.params), { to: '79991234567', text: 'hi', from: 'X', digital: 1, short: 0, id: 's1' });
 });
 
 test('toActionFrame: missing callID yields empty call_id', () => {
     const f = toActionFrame({ action: 'stop-app' });
     assert.equal(f.type, 'stop-app');
     assert.equal(f.call_id, '');
-    assert.deepEqual(f.params, {});
+    assert.deepEqual(structToPlain(f.params), {});
 });
 
 // ---- receive: gRPC Event -> v1 message ----
