@@ -1,0 +1,151 @@
+syntax = "proto3";
+
+// ProPBX SDK transport, v2.
+//
+// Why v2 exists
+// -------------
+// The legacy transport is a single WebSocket per app instance carrying the
+// control plane of EVERY call that instance handles (round-robin carousel).
+// Call recordings were delivered inline as base64 WAV inside a control message
+// (callFinished / recordingComplete). A long call produces a multi-MB frame;
+// when it exceeds the client's WS maxPayload the client closes the socket with
+// code 1009 ("message too big") and ProPBX tears down EVERY call multiplexed on
+// that connection. One fat recording => mass call drop.
+//
+// The two-stream model
+// --------------------
+// HTTP/2 only isolates head-of-line blocking ACROSS streams; messages within a
+// single stream are strictly ordered. So v2 uses TWO streams over the one
+// connection:
+//
+//   * Session     — bidirectional control plane (the same actions/events as v1).
+//   * MediaStream  — a server->client downlink that carries recording bytes as
+//                    bounded MediaChunk frames, on its OWN HTTP/2 stream.
+//
+// Because MediaStream is a separate stream, HTTP/2 interleaves a multi-MB
+// recording with live control Events under per-stream flow control — a big
+// recording can neither stall the control plane nor close the connection. Bytes
+// are raw (no base64 inflation). Recordings are pushed the moment they finalize
+// (no server-side retention waiting for a pull), so this adds no memory backlog.
+//
+// The control plane (Action/Event) is intentionally kept 1:1 with the proven v1
+// message set (a name + a free-form params object) so the server can reuse the
+// existing call handler verbatim and v1/v2 behavior cannot diverge during
+// migration. Individual actions/events can be promoted to fully typed messages
+// later without breaking this envelope.
+
+package propbx.v2;
+
+option go_package = "github.com/propbx/propbx/internal/grpcserver/pb;pbv2";
+
+import "google/protobuf/struct.proto";
+
+// AppGateway is the v2 SDK service. Credentials ("app-id" + "app-key") are
+// passed as call metadata on every RPC and validated by a server interceptor —
+// the same static auth as the WS server.
+service AppGateway {
+  // Session is the persistent bidirectional control channel. The first frame
+  // the client sends MUST be a Hello; the server replies with a Welcome (which
+  // carries the session_token) before any Event.
+  rpc Session(stream ClientFrame) returns (stream ServerFrame);
+
+  // MediaStream is the recording downlink. The client opens it once, right
+  // after receiving Welcome, passing the session_token to bind it to its
+  // Session. The server then streams MediaChunk frames for that session's
+  // recordings on this separate HTTP/2 stream. If no MediaStream is open when a
+  // recording finalizes, ProPBX skips the live push and relies on CDR/S3 — it
+  // never buffers recordings waiting for the client to (re)connect.
+  rpc MediaStream(MediaStreamRequest) returns (stream MediaChunk);
+}
+
+// ---- Session: client -> server ---------------------------------------------
+
+message ClientFrame {
+  oneof frame {
+    Hello hello = 1;    // handshake; MUST be the first frame
+    Action action = 2;  // a control action (tts, answer, hangup, ...)
+  }
+}
+
+// Hello negotiates protocol capabilities. Credentials are NOT here — they ride
+// in metadata so they never land in payload logs.
+message Hello {
+  uint32 protocol = 1;         // protocol major version; = 2
+  string sdk_version = 2;      // informational (client build), e.g. "node-2.0.1"
+  uint32 max_chunk_bytes = 3;  // largest MediaChunk.data the client wants; 0 = server default. Server clamps to its own ceiling.
+}
+
+// Action mirrors a legacy SDK "action": a name plus its arguments. Keeping the
+// control plane untyped here lets ProPBX route v2 actions through the same
+// handler as v1 (no behavioral fork during migration).
+message Action {
+  string type = 1;                    // action name: "tts", "answer", "hangup", "make-call", ...
+  string call_id = 2;                 // target call, when applicable
+  google.protobuf.Struct params = 3;  // action arguments (== v1 params)
+}
+
+// ---- Session: server -> client ---------------------------------------------
+
+message ServerFrame {
+  oneof frame {
+    Welcome welcome = 1;  // handshake reply; first server frame
+    Event event = 2;      // a control event (incomingCall, transcribe, callFinished, ...)
+  }
+}
+
+message Welcome {
+  string node_id = 1;          // serving ProPBX node
+  string application_id = 2;   // resolved application id (auth-name -> app id)
+  string server_version = 3;
+  uint32 max_chunk_bytes = 4;  // effective negotiated chunk size the server will use
+  // Opaque token binding a subsequent MediaStream to this Session. Treat as a
+  // secret; it is the capability to receive this session's recordings.
+  string session_token = 5;
+}
+
+// Event mirrors a legacy SDK "event": a name plus its params. Recordings are NO
+// LONGER embedded here. A callFinished/recordingComplete Event carries only
+// recording METADATA — params.recordings is a list of {recordingID, format,
+// duration, size} — and the bytes arrive as MediaChunk frames on MediaStream
+// with the matching media_id.
+message Event {
+  string type = 1;                    // event name: "incomingCall", "transcribe", "callFinished", ...
+  string call_id = 2;
+  google.protobuf.Struct params = 3;  // event payload (== v1 params, minus inline audio)
+}
+
+// ---- MediaStream: server -> client -----------------------------------------
+
+message MediaStreamRequest {
+  string session_token = 1;    // from Welcome; binds this downlink to a Session
+  uint32 max_chunk_bytes = 2;  // optional re-assertion of the client's chunk ceiling
+}
+
+// MediaChunk delivers binary media (call recordings today) in bounded pieces.
+//
+// Reassembly contract:
+//   * A media object = 1..N chunks sharing the same media_id.
+//   * seq starts at 0 and increases by 1; the final chunk has eof = true
+//     (a zero-length eof chunk is valid as a terminator).
+//   * info is populated on the FIRST chunk (seq == 0) only.
+//   * Chunks of different media_id may interleave on the stream — always
+//     demultiplex by media_id.
+// The corresponding control Event (e.g. callFinished) lists the media_ids the
+// client should expect, so it can correlate and know when a call is complete.
+message MediaChunk {
+  string media_id = 1;     // == recordingID
+  string call_id = 2;
+  uint32 seq = 3;          // 0-based chunk index within this media_id
+  bool eof = 4;            // true on the last chunk
+  bytes data = 5;          // raw bytes (e.g. WAV) — NOT base64
+  MediaInfo info = 6;      // set on seq == 0 only
+}
+
+message MediaInfo {
+  string kind = 1;         // "recording"
+  string format = 2;       // "wav"
+  uint32 sample_rate = 3;  // e.g. 8000
+  uint32 channels = 4;     // e.g. 1
+  uint64 total_bytes = 5;  // full media size, for preallocation / progress
+  uint32 duration_ms = 6;
+}

@@ -1,7 +1,10 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.WS_CALL_EVENTS = exports.APP_EVENTS = exports.WS_EVENTS = void 0;
-exports.WS_EVENTS = {
+/**
+ * Event-name constant maps. The string VALUES are the public wire/event names and
+ * are identical to the legacy v1 SDK — do not change them. Only the transport
+ * underneath changed (WebSocket -> gRPC); the names bots listen for did not.
+ */
+
+export const WS_EVENTS = {
     WS_SEND: 'wsSend',
     WS_RECEIVE: 'wsReceive',
     ERROR: 'error',
@@ -12,12 +15,14 @@ exports.WS_EVENTS = {
     FILE_STORE_ERROR: 'file-store-error',
     CALL_DISCONNECTED: 'call-disconnected',
     CALL_FINISHED: 'callFinished',
+    CACHE_TTS_READY: 'cacheTTSReady',
     PING: 'ping',
     RECONNECT: 'reconnect',
     WS_PING: 'wsPing',
     WS_PONG: 'wsPong',
-};
-exports.APP_EVENTS = {
+} as const;
+
+export const APP_EVENTS = {
     AUTH_FAIL: 'AUTH_FAIL',
     BOT_ERROR: 'botError',
     DISCONNECTED: 'disconnected',
@@ -37,8 +42,9 @@ exports.APP_EVENTS = {
     VARIABLES_SET: 'variables-set',
     VARIABLES_DELETE: 'variables-delete',
     VARIABLES_GET: 'variables-get',
-};
-exports.WS_CALL_EVENTS = {
+} as const;
+
+export const WS_CALL_EVENTS = {
     BOT_ERROR: 'botError',
     RECORDING_SESSION_NOT_FOUND: 'recordingSessionNotFound',
     RECORDING_FAILED: 'recordingFailed',
@@ -52,5 +58,4 @@ exports.WS_CALL_EVENTS = {
     VARIABLES_SET: 'variables-set',
     VARIABLES_DELETE: 'variables-delete',
     VARIABLES_GET: 'variables-get',
-};
-//# sourceMappingURL=events.js.map
+} as const;

@@ -1,13 +1,12 @@
 {
   "name": "propbx-sdk",
-  "version": "1.0.0",
-  "description": "ProPBX SDK library",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "version": "2.0.0",
+  "description": "ProPBX SDK library (v2, gRPC transport)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "files": [
-    "index.js",
-    "index.d.ts",
-    "propbx-sdk"
+    "dist",
+    "proto"
   ],
   "author": "Yavlenie Pro",
   "license": "ISC",
@@ -15,10 +14,29 @@
     "type": "git",
     "url": "git+https://github.com/yavlenie-pro/propbx-sdk.git"
   },
+  "engines": {
+    "node": ">=16"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prepare": "npm run build",
+    "pretest": "npm run build",
+    "test": "node --test",
+    "smoke": "node --test test/smoke/recording.smoke.mjs"
+  },
   "dependencies": {
+    "@grpc/grpc-js": "^1.10.6",
+    "@grpc/proto-loader": "^0.7.12",
     "md5": "^2.3.0",
     "mime": "^2.5.2",
-    "uuid": "^8.3.2",
-    "ws": "^7.4.6"
+    "uuid": "^8.3.2"
+  },
+  "devDependencies": {
+    "@types/md5": "^2.3.5",
+    "@types/mime": "^2.0.3",
+    "@types/node": "^20.12.7",
+    "@types/uuid": "^8.3.4",
+    "typescript": "^5.4.5"
   }
 }
