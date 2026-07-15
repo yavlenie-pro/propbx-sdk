@@ -35,6 +35,9 @@ const DEFAULT_MAX_BACKOFF_MS = 30000;
 const MEDIA_REOPEN_DELAY_MS = 500;
 
 const RECORDING_EVENTS = new Set(['recordingComplete', 'callFinished']);
+const EVENT_CALL_FINISHED = 'callFinished';
+const EVENT_CALL_DISCONNECTED = 'call-disconnected';
+const NOOP = (): void => {};
 
 /** Strip a `scheme://` prefix and any path so v1 `wss://host/...` URLs still work. */
 export function toGrpcTarget(url: string): string {
@@ -77,6 +80,10 @@ export class GrpcTransport extends EventEmitter {
 
     private readonly assembler = new MediaAssembler();
     private readonly correlator: RecordingCorrelator;
+    // Per-call promise that settles when a held `callFinished` has been dispatched.
+    // `call-disconnected` for the same call waits on it so the terminal event is
+    // never overtaken by teardown (see onEvent).
+    private readonly pendingFinishByCall = new Map<string, Promise<void>>();
 
     constructor(config: InfobotConfig) {
         super();
@@ -177,23 +184,51 @@ export class GrpcTransport extends EventEmitter {
 
     private onEvent(ev: any): void {
         const message: any = toClientMessage(ev);
+        const ep = this.epoch;
+        const callId: string | undefined = message.callID;
+
+        const dispatch = (m: any): void => {
+            if (ep === this.epoch && !this.stopped) this.emit('message', m);
+        };
 
         if (RECORDING_EVENTS.has(ev.type)) {
             // Hold the event until its audio reassembles (or times out), then
             // dispatch with the recording entry populated in the v1 shape.
-            const ep = this.epoch;
-            this.correlator
+            const done = this.correlator
                 .correlate(message, ev.type)
-                .then((filled) => {
-                    if (ep === this.epoch && !this.stopped) this.emit('message', filled);
-                })
-                .catch(() => {
-                    if (ep === this.epoch && !this.stopped) this.emit('message', message);
+                .then(dispatch, () => dispatch(message));
+
+            // `callFinished` is the terminal control event, sent by the server
+            // right BEFORE `call-disconnected`. We hold it here waiting for the
+            // recording bytes, but `call-disconnected` is NOT held — so without
+            // ordering it overtakes the held `callFinished`, the class layer
+            // removes the call, and the late `callFinished` is then dropped as
+            // belonging to an already-finished call (losing its duration AND its
+            // recording). Remember the in-flight dispatch so `call-disconnected`
+            // can wait behind it and the server's ordering is preserved.
+            if (ev.type === EVENT_CALL_FINISHED && callId) {
+                const settled = done.then(NOOP, NOOP);
+                this.pendingFinishByCall.set(callId, settled);
+                void settled.then(() => {
+                    if (this.pendingFinishByCall.get(callId) === settled) {
+                        this.pendingFinishByCall.delete(callId);
+                    }
                 });
+            }
             return;
         }
 
-        this.emit('message', message);
+        // Hold `call-disconnected` behind a still-pending `callFinished` for the
+        // same call, restoring the server's callFinished→call-disconnected order.
+        if (ev.type === EVENT_CALL_DISCONNECTED && callId) {
+            const pending = this.pendingFinishByCall.get(callId);
+            if (pending) {
+                void pending.then(() => dispatch(message));
+                return;
+            }
+        }
+
+        dispatch(message);
     }
 
     private onSessionDown(err: grpc.ServiceError | null): void {
@@ -249,6 +284,7 @@ export class GrpcTransport extends EventEmitter {
         // Partial reassemblies and the old token are unrecoverable across a new Session.
         this.assembler.reset();
         this.correlator.dispose();
+        this.pendingFinishByCall.clear();
         this.sessionToken = '';
 
         // Let ProPBX clear its calls and surface a user-facing 'reconnect'.
