@@ -18,6 +18,14 @@ export default class ProPBXCall extends EventEmitter {
     private transport: CallTransport;
     params: any;
     isConnected: boolean;
+    /**
+     * True while the call sits in an active bridge (call-forward answered, bot
+     * detached from the media path). A bridged call produces no per-call events
+     * for the whole conversation, so the class layer must not GC it by
+     * inactivity — otherwise `forwardedCallFinished`/`callFinished` at the end
+     * of a long transfer would hit a removed call and be dropped.
+     */
+    isBridged: boolean;
     variables: ProPBXVariables;
 
     constructor(id: string = uuidv4(), transport: CallTransport, params: any = {}) {
@@ -26,6 +34,7 @@ export default class ProPBXCall extends EventEmitter {
         this.transport = transport;
         this.params = params;
         this.isConnected = false;
+        this.isBridged = false;
         this.setMaxListeners(200);
         this.variables = new ProPBXVariables(this);
     }

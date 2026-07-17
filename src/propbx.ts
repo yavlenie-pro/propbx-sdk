@@ -105,6 +105,14 @@ export default class ProPBX extends EventEmitter {
 
     private handleCallWsMessage(message: any): void {
         const { event } = message;
+        // Server-side no-op emitted every ~60s for calls sitting in an active
+        // bridge, purely to reset the inactivity timer. Never create a call for
+        // it (a keepalive for an untracked call would spawn a phantom object)
+        // and don't surface it to listeners.
+        if (event === WS_EVENTS.CALL_KEEPALIVE) {
+            this.getCall(message.callID);
+            return;
+        }
         let call = this.getCall(message.callID);
         if (!call) {
             if (this.finishedCalls.has(message.callID)) {
@@ -112,6 +120,15 @@ export default class ProPBX extends EventEmitter {
             }
             call = new ProPBXCall(message.callID, this.transport, message.params);
             this.calls[message.callID] = call;
+        }
+        if (event === WS_EVENTS.FORWARD_STARTED || event === WS_EVENTS.FORWARDED_CALL_ANSWERED) {
+            call.isBridged = true;
+        } else if (
+            event === WS_EVENTS.FORWARDED_CALL_FINISHED ||
+            event === WS_EVENTS.FORWARDED_CALL_FAILED ||
+            event === WS_EVENTS.FORWARDED_CALL_NOT_ANSWERED
+        ) {
+            call.isBridged = false;
         }
         if (event === WS_EVENTS.ERROR) {
             this.emit(APP_EVENTS.BOT_ERROR, call);
@@ -251,13 +268,23 @@ export default class ProPBX extends EventEmitter {
         return call;
     }
 
-    removeCall(callId: string): boolean {
+    /**
+     * Drop a tracked call. The `finishedCalls` tombstone (which makes every
+     * later event for this callID silently dropped) is only written when the
+     * removal is authoritative — server said the call ended, or we're tearing
+     * down. An inactivity expiry passes `expired = true` to skip it, so a late
+     * `forwardedCallFinished`/`callFinished` can still recreate the call and
+     * reach instance-level listeners instead of vanishing.
+     */
+    removeCall(callId: string, expired = false): boolean {
         if (this.callTimers[callId]) {
             clearTimeout(this.callTimers[callId]);
             delete this.callTimers[callId];
         }
         if (this.calls[callId]) {
-            this.finishedCalls.add(callId);
+            if (!expired) {
+                this.finishedCalls.add(callId);
+            }
             this.calls[callId].removeAllListeners();
             delete this.calls[callId];
             return true;
@@ -279,6 +306,22 @@ export default class ProPBX extends EventEmitter {
         if (this.callTimers[callId]) {
             clearTimeout(this.callTimers[callId]);
         }
-        this.callTimers[callId] = setTimeout(this.removeCall.bind(this), this.maxCallTimeout, callId);
+        this.callTimers[callId] = setTimeout(this.expireCall.bind(this), this.maxCallTimeout, callId);
+    }
+
+    /**
+     * Inactivity timer fired. A bridged call is silent by design for however
+     * long the operator conversation lasts — re-arm instead of GC'ing it (the
+     * bridge always terminates with `forwardedCallFinished`, which is also the
+     * escape hatch if the flag somehow sticks: `callFinished` follows it and
+     * removes the call for real).
+     */
+    private expireCall(callId: string): void {
+        const call = this.calls[callId];
+        if (call && call.isBridged) {
+            this.touchCall(callId);
+            return;
+        }
+        this.removeCall(callId, true);
     }
 }
