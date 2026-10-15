@@ -74,7 +74,8 @@ test/                       — unit-тесты (.mjs против dist/) + gate
 
 ## Частые ошибки, которых нужно избегать
 
-- **Graceful shutdown**: на SIGTERM/SIGINT вызывать `bot.stop()` (дренаж + закрытие стримов этого инстанса) и `process.exit()`, **НИКОГДА не `stopApp()`** — он останавливает приложение серверно для **всех** инстансов карусели.
+- **Graceful shutdown**: на SIGTERM/SIGINT сначала дождаться `getCallsCount() === 0` (с дедлайном), потом `bot.stop()`, потом `process.exit()`. `stop()` сам **не** дренирует: он закрывает Session, и сервер кладёт трубку на всех звонках этого инстанса. **НИКОГДА не `stopApp()`** — он останавливает приложение серверно для **всех** инстансов карусели.
+- **События без callID** (`ping`, `wsPong`) — уровня соединения: обрабатываются в `handleConnectionMessage` и **никогда** не создают звонок. Иначе фантомный звонок `''` держит `getCallsCount() > 0` вечно (сервер шлёт `ping` раз в 30 с) и дренаж висит до SIGKILL. PONG отправляется только при `pingEnable`.
 - **Не использовать `function` в обработчиках событий** внутри классов — только стрелочные `() => {}`, иначе теряется `this`.
 - **Не забывать `return`** после терминальных событий (CALL_DISCONNECTED, ERROR), чтобы не дублировать emit/processEvent.
 - **Не вешать `.on()` без парного `.off()`** — хранить ссылку на обработчик.
@@ -122,5 +123,11 @@ bot.on('incomingCall', (call, params) => {
     playback.on('playbackFinished', () => call.hangup());
 });
 
-process.on('SIGTERM', () => { bot.stop(); process.exit(0); });  // НЕ stopApp()
+// Дренаж → stop() → exit. НЕ stopApp(). Полный пример — README, раздел Usage.
+process.on('SIGTERM', async () => {
+    const deadline = Date.now() + 10 * 60 * 1000;
+    while (bot.getCallsCount() > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 1000));
+    bot.stop();
+    process.exit(0);
+});
 ```

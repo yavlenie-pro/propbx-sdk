@@ -68,10 +68,28 @@ bot.on('callFinished', (call, params) => {
     // params.recordings[i] carry { recordingID, format, size, duration_ms, data, binaryData, buffer }
 });
 
-// Graceful shutdown — drains THIS instance only.
-process.on('SIGTERM', () => { bot.stop(); process.exit(0); });
-process.on('SIGINT',  () => { bot.stop(); process.exit(0); });
+// Graceful shutdown: drain, then stop(), then exit. stop() closes this
+// instance's Session and the server hangs up every call still on it, so wait
+// for active calls first. Never stopApp(): it stops the app for ALL instances.
+let shuttingDown = false;
+async function shutdown() {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    // Keep below the pod's terminationGracePeriodSeconds.
+    const deadline = Date.now() + 10 * 60 * 1000;
+    while (bot.getCallsCount() > 0 && Date.now() < deadline) {
+        console.log(`waiting for ${bot.getCallsCount()} call(s) to finish...`);
+        await new Promise((r) => setTimeout(r, 1000));
+    }
+    bot.stop();
+    process.exit(0);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 ```
+
+Until `stop()` the instance stays in the server's carousel and can still be
+handed new calls; the deadline bounds the wait so the pod exits before SIGKILL.
 
 The full call/playback/recognition/recording/variables API is identical to v1:
 `answer`, `hangup`, `say`, `playURL`, `playFile`, `forward`, `startBackgroundSound`,
@@ -120,13 +138,14 @@ connection drops / the SDK shuts down while pending.
 | Auth | `auth` action | `app-id` / `app-key` gRPC metadata (automatic) |
 | Recording bytes | inline base64 in `callFinished` | reassembled from MediaStream, **injected into the same entry** (`data`/`binaryData`/`buffer`) |
 | Liveness | app-level WS ping | gRPC keepalive (automatic) |
-| Shutdown | — | `bot.stop()` / `bot.close()` — never `stopApp()` on a signal |
+| Shutdown | — | drain `getCallsCount()` to 0, then `bot.stop()` / `bot.close()` — never `stopApp()` on a signal |
 
 Public class/event names and method signatures are unchanged. In practice the
 only required change for most bots is the `url` value.
 
 > **`stopApp()` is app-global.** It stops the application server-side for *all*
-> instances of your `app_id`. Never wire it to SIGTERM/SIGINT — use `bot.stop()`.
+> instances of your `app_id`. Never wire it to SIGTERM/SIGINT — drain, then
+> `bot.stop()` (see Usage).
 
 ## Configuration
 
@@ -135,6 +154,7 @@ only required change for most bots is the `url` value.
 | `url` | — | gRPC `host:port` |
 | `appId`, `key` | — | sent as `app-id` / `app-key` metadata |
 | `tls` | `false` | use TLS for the channel |
+| `pingEnable` | `false` | answer the server's heartbeat `ping` with `PONG` (not needed for liveness on gRPC) |
 | `disableReconnect` | `false` | disable the auto-reconnect loop |
 | `maxChunkBytes` | server default (64 KiB) | client MediaChunk ceiling |
 | `recordingTimeoutMs` | `15000` | hold a recording event this long awaiting bytes before emitting metadata-only |

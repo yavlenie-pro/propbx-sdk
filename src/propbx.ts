@@ -83,8 +83,30 @@ export default class ProPBX extends EventEmitter {
                 this.handleCacheTTSReady(message);
                 break;
             default:
-                this.handleCallWsMessage(message);
+                if (!message.callID) {
+                    this.handleConnectionMessage(message);
+                } else {
+                    this.handleCallWsMessage(message);
+                }
         }
+    }
+
+    /**
+     * An event without a callID belongs to the connection, not to a call: the
+     * server's heartbeat `ping` (broadcast to every connection, gRPC included,
+     * every websocket.ping_interval_sec) and its `wsPong` ack of our PONG.
+     * Routing these into handleCallWsMessage created a phantom call with id ''
+     * that every ping kept alive, so getCallsCount() never reached 0 and
+     * drain-before-exit loops waited until SIGKILL. Never create a call here.
+     */
+    private handleConnectionMessage(message: any): void {
+        const { event } = message;
+        if (event === WS_EVENTS.PING && this.pingEnable) {
+            this.send(actions.pong());
+        }
+        // An 'error' with no listener would throw — surface it as botError like
+        // the per-call path does.
+        this.emit(event === WS_EVENTS.ERROR ? APP_EVENTS.BOT_ERROR : event, null, message.params);
     }
 
     /** Route a `cacheTTSReady` event to the matching pending precache promise. */
@@ -151,7 +173,6 @@ export default class ProPBX extends EventEmitter {
         }
         this.emit(event, call, message.params);
         call.processEvent(event, message.params, message);
-        if (event === WS_EVENTS.PING) call.pong();
     }
 
     private connect(): void {
@@ -187,9 +208,11 @@ export default class ProPBX extends EventEmitter {
     }
 
     /**
-     * Graceful local shutdown: drop tracked calls and close the gRPC streams so
-     * the server removes this instance from its carousel. Safe for SIGTERM/SIGINT
-     * (followed by process.exit). Does NOT stop the app for other instances.
+     * Local shutdown: drop tracked calls and close the gRPC streams so the
+     * server removes this instance from its carousel. Does NOT stop the app for
+     * other instances. Closing the Session makes the server hang up every call
+     * still on this instance, so on SIGTERM/SIGINT drain first (wait until
+     * getCallsCount() is 0, with a deadline), then stop(), then process.exit().
      */
     stop(): void {
         for (const callId of Object.keys(this.calls)) {
