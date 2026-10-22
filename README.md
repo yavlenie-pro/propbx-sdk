@@ -68,13 +68,16 @@ bot.on('callFinished', (call, params) => {
     // params.recordings[i] carry { recordingID, format, size, duration_ms, data, binaryData, buffer }
 });
 
-// Graceful shutdown: drain, then stop(), then exit. stop() closes this
-// instance's Session and the server hangs up every call still on it, so wait
-// for active calls first. Never stopApp(): it stops the app for ALL instances.
+// Graceful shutdown: drain(), wait for active calls, then stop(), then exit.
+// drain() takes this instance out of the server's carousel so new calls go to
+// the other instances; stop() closes the Session and the server hangs up every
+// call still on it. Never stopApp(): it stops the app for ALL instances.
 let shuttingDown = false;
 async function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
+    // A server without drain support does not answer: keep draining anyway.
+    bot.drain().catch((e) => console.warn(`drain: ${e.message}`));
     // Keep below the pod's terminationGracePeriodSeconds.
     const deadline = Date.now() + 10 * 60 * 1000;
     while (bot.getCallsCount() > 0 && Date.now() < deadline) {
@@ -88,8 +91,12 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 ```
 
-Until `stop()` the instance stays in the server's carousel and can still be
-handed new calls; the deadline bounds the wait so the pod exits before SIGKILL.
+`drain()` sends the connection-level `drain` action and resolves on the
+server's `drain-ok`. The server keeps the flag per Session, so the SDK re-sends
+it after every reconnect until `undrain()`. Without `drain()` (or on a server
+that does not support it) the instance stays in the carousel until `stop()`
+and keeps getting new calls; the deadline bounds the wait so the pod exits
+before SIGKILL.
 
 The full call/playback/recognition/recording/variables API is identical to v1:
 `answer`, `hangup`, `say`, `playURL`, `playFile`, `forward`, `startBackgroundSound`,
@@ -138,14 +145,14 @@ connection drops / the SDK shuts down while pending.
 | Auth | `auth` action | `app-id` / `app-key` gRPC metadata (automatic) |
 | Recording bytes | inline base64 in `callFinished` | reassembled from MediaStream, **injected into the same entry** (`data`/`binaryData`/`buffer`) |
 | Liveness | app-level WS ping | gRPC keepalive (automatic) |
-| Shutdown | — | drain `getCallsCount()` to 0, then `bot.stop()` / `bot.close()` — never `stopApp()` on a signal |
+| Shutdown | — | `bot.drain()`, wait for `getCallsCount()` to reach 0, then `bot.stop()` / `bot.close()` — never `stopApp()` on a signal |
 
 Public class/event names and method signatures are unchanged. In practice the
 only required change for most bots is the `url` value.
 
 > **`stopApp()` is app-global.** It stops the application server-side for *all*
-> instances of your `app_id`. Never wire it to SIGTERM/SIGINT — drain, then
-> `bot.stop()` (see Usage).
+> instances of your `app_id`. Never wire it to SIGTERM/SIGINT — `bot.drain()`,
+> wait for the calls, then `bot.stop()` (see Usage).
 
 ## Configuration
 

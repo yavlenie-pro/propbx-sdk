@@ -12,6 +12,13 @@ interface PendingPrecache {
     timer: NodeJS.Timeout;
 }
 
+interface PendingDrainAck {
+    draining: boolean;
+    resolve: () => void;
+    reject: (err: Error) => void;
+    timer: NodeJS.Timeout;
+}
+
 export default class ProPBX extends EventEmitter {
     private config: InfobotConfig;
     maxCallTimeout: number;
@@ -26,6 +33,10 @@ export default class ProPBX extends EventEmitter {
     finishedCalls: Set<string> = new Set();
     private callTimers: Record<string, NodeJS.Timeout> = {};
     private pendingPrecache: Map<string, PendingPrecache> = new Map();
+    // Set by drain(), cleared by undrain(). The server keeps the flag on the
+    // connection, so it is re-sent on every (re)connect.
+    private draining = false;
+    private pendingDrainAcks: Set<PendingDrainAck> = new Set();
 
     constructor(
         config: InfobotConfig,
@@ -68,7 +79,13 @@ export default class ProPBX extends EventEmitter {
         const { event } = message;
         switch (event) {
             case WS_EVENTS.AUTH_OK:
+                this.onConnected();
                 this.emit(APP_EVENTS.CONNECTED);
+                break;
+            case WS_EVENTS.DRAIN_OK:
+            case WS_EVENTS.UNDRAIN_OK:
+                this.settleDrainAcks(event === WS_EVENTS.DRAIN_OK);
+                this.handleConnectionMessage(message);
                 break;
             case WS_EVENTS.AUTH_FAIL:
                 this.emit(APP_EVENTS.AUTH_FAIL);
@@ -107,6 +124,30 @@ export default class ProPBX extends EventEmitter {
         // An 'error' with no listener would throw — surface it as botError like
         // the per-call path does.
         this.emit(event === WS_EVENTS.ERROR ? APP_EVENTS.BOT_ERROR : event, null, message.params);
+    }
+
+    /**
+     * A new Session joins the server's carousel even if the previous one was
+     * draining, so re-send drain. A pending undrain is done by the reconnect
+     * itself: the new Session starts in the carousel.
+     */
+    private onConnected(): void {
+        if (this.draining) {
+            this.send(actions.drain());
+        } else {
+            this.settleDrainAcks(false);
+        }
+    }
+
+    /** Resolve the pending drain()/undrain() calls that asked for this state. */
+    private settleDrainAcks(draining: boolean): void {
+        for (const pending of this.pendingDrainAcks) {
+            if (pending.draining === draining) {
+                clearTimeout(pending.timer);
+                this.pendingDrainAcks.delete(pending);
+                pending.resolve();
+            }
+        }
     }
 
     /** Route a `cacheTTSReady` event to the matching pending precache promise. */
@@ -200,8 +241,8 @@ export default class ProPBX extends EventEmitter {
 
     /**
      * DANGER: stops the application server-side for ALL instances of this app_id.
-     * Do NOT wire this to SIGTERM/SIGINT — use `stop()` to drain just this
-     * instance. Kept for parity with v1 / control tooling.
+     * Do NOT wire this to SIGTERM/SIGINT — use `drain()` to take just this
+     * instance out of the carousel. Kept for parity with v1 / control tooling.
      */
     stopApp(): void {
         this.send({ action: actions.ACTIONS.STOP_APP });
@@ -211,8 +252,9 @@ export default class ProPBX extends EventEmitter {
      * Local shutdown: drop tracked calls and close the gRPC streams so the
      * server removes this instance from its carousel. Does NOT stop the app for
      * other instances. Closing the Session makes the server hang up every call
-     * still on this instance, so on SIGTERM/SIGINT drain first (wait until
-     * getCallsCount() is 0, with a deadline), then stop(), then process.exit().
+     * still on this instance, so on SIGTERM/SIGINT call drain() first, wait
+     * until getCallsCount() is 0 (with a deadline), then stop(), then
+     * process.exit().
      */
     stop(): void {
         for (const callId of Object.keys(this.calls)) {
@@ -220,9 +262,61 @@ export default class ProPBX extends EventEmitter {
         }
         this.finishedCalls.clear();
         this.rejectAllPrecache('precacheTTS aborted: SDK stopped');
+        this.rejectAllDrainAcks('drain aborted: SDK stopped');
         if (this.transport) {
             this.transport.stop();
         }
+    }
+
+    /**
+     * Take this instance out of the server's call carousel: new calls of the
+     * app go to its other instances, while calls already on this instance keep
+     * working. Use it before a restart — drain(), wait until getCallsCount() is
+     * 0 (with a deadline), then stop() and exit.
+     *
+     * The server keeps the flag per Session, so the SDK re-sends drain after
+     * every reconnect until undrain() is called. Resolves on `drain-ok`; rejects
+     * after `timeoutMs` (a server without drain support does not answer) or on
+     * stop(). Rejection does not cancel the drain intent.
+     */
+    drain(timeoutMs = 10000): Promise<void> {
+        this.draining = true;
+        return this.sendDrainAction(true, timeoutMs);
+    }
+
+    /** Put this instance back into the call carousel. See {@link drain}. */
+    undrain(timeoutMs = 10000): Promise<void> {
+        this.draining = false;
+        return this.sendDrainAction(false, timeoutMs);
+    }
+
+    isDraining(): boolean {
+        return this.draining;
+    }
+
+    private sendDrainAction(draining: boolean, timeoutMs: number): Promise<void> {
+        const action = draining ? 'drain' : 'undrain';
+        return new Promise<void>((resolve, reject) => {
+            const pending: PendingDrainAck = {
+                draining,
+                resolve,
+                reject,
+                timer: setTimeout(() => {
+                    this.pendingDrainAcks.delete(pending);
+                    reject(new Error(`${action} not acknowledged after ${timeoutMs}ms`));
+                }, timeoutMs),
+            };
+            this.pendingDrainAcks.add(pending);
+            this.send(draining ? actions.drain() : actions.undrain());
+        });
+    }
+
+    private rejectAllDrainAcks(reason: string): void {
+        for (const pending of this.pendingDrainAcks) {
+            clearTimeout(pending.timer);
+            pending.reject(new Error(reason));
+        }
+        this.pendingDrainAcks.clear();
     }
 
     /** Alias for {@link stop}. */

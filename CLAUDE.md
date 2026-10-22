@@ -61,6 +61,7 @@ test/                       — unit-тесты (.mjs против dist/) + gate
 
 - `precacheTTS(text, opts)` / `precacheTTSMany(phrases)` на `ProPBX` — пресинтез TTS-фразы в кэш сервера (звонок не нужен). Шлёт `cache-tts` с `call_id:""` и `requestID` (UUID), возвращает `Promise<void>`, который резолвится на `cacheTTSReady{ok:true, requestID}`. Пендинги трекаются в `pendingPrecache: Map<requestID,...>`, диспетчер маршрутизирует событие по `requestID`; при таймауте/дисконнекте/`stop()` все пендинги реджектятся (без утечек).
 - **opts пресинтеза должны точно совпадать с последующим `say()/tts`** — иначе промах кэша (ключ сервера = `sha256(text, voice, language, emotion, speed, ssml, provider)`).
+- `drain(timeoutMs?)` / `undrain(timeoutMs?)` — вывести соединение из карусели сервера / вернуть. Шлёт `drain`/`undrain` с `call_id:""`, резолвится на `drain-ok`/`undrain-ok` (они же эмитятся на инстансе), реджектится по таймауту (старый сервер не отвечает) или на `stop()`. Флаг `draining` сервер держит на Session, поэтому SDK повторяет `drain` на каждом `auth-ok` (Welcome новой сессии), пока не вызван `undrain()`. Реджект намерение не отменяет.
 - Не путать с легаси `call.cacheTTS(phrases)` — это другой вызов (на уровне звонка, поле `phrases`), хотя wire-тип тот же `cache-tts`.
 
 ## Ключевые принципы
@@ -74,7 +75,7 @@ test/                       — unit-тесты (.mjs против dist/) + gate
 
 ## Частые ошибки, которых нужно избегать
 
-- **Graceful shutdown**: на SIGTERM/SIGINT сначала дождаться `getCallsCount() === 0` (с дедлайном), потом `bot.stop()`, потом `process.exit()`. `stop()` сам **не** дренирует: он закрывает Session, и сервер кладёт трубку на всех звонках этого инстанса. **НИКОГДА не `stopApp()`** — он останавливает приложение серверно для **всех** инстансов карусели.
+- **Graceful shutdown**: на SIGTERM/SIGINT `bot.drain()` (инстанс выходит из карусели сервера, новые звонки уходят другим инстансам), потом дождаться `getCallsCount() === 0` (с дедлайном), потом `bot.stop()`, потом `process.exit()`. `stop()` сам **не** дренирует: он закрывает Session, и сервер кладёт трубку на всех звонках этого инстанса. **НИКОГДА не `stopApp()`** — он останавливает приложение серверно для **всех** инстансов карусели.
 - **События без callID** (`ping`, `wsPong`) — уровня соединения: обрабатываются в `handleConnectionMessage` и **никогда** не создают звонок. Иначе фантомный звонок `''` держит `getCallsCount() > 0` вечно (сервер шлёт `ping` раз в 30 с) и дренаж висит до SIGKILL. PONG отправляется только при `pingEnable`.
 - **Не использовать `function` в обработчиках событий** внутри классов — только стрелочные `() => {}`, иначе теряется `this`.
 - **Не забывать `return`** после терминальных событий (CALL_DISCONNECTED, ERROR), чтобы не дублировать emit/processEvent.
@@ -123,8 +124,9 @@ bot.on('incomingCall', (call, params) => {
     playback.on('playbackFinished', () => call.hangup());
 });
 
-// Дренаж → stop() → exit. НЕ stopApp(). Полный пример — README, раздел Usage.
+// drain() → ожидание звонков → stop() → exit. НЕ stopApp(). Полный пример — README, раздел Usage.
 process.on('SIGTERM', async () => {
+    bot.drain().catch(() => {});
     const deadline = Date.now() + 10 * 60 * 1000;
     while (bot.getCallsCount() > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 1000));
     bot.stop();

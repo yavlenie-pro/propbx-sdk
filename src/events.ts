@@ -22,6 +22,8 @@ export const WS_EVENTS = {
     FORWARDED_CALL_NOT_ANSWERED: 'forwardedCallNotAnswered',
     FORWARDED_CALL_FINISHED: 'forwardedCallFinished',
     CACHE_TTS_READY: 'cacheTTSReady',
+    DRAIN_OK: 'drain-ok',
+    UNDRAIN_OK: 'undrain-ok',
     PING: 'ping',
     RECONNECT: 'reconnect',
     WS_PING: 'wsPing',

@@ -44,6 +44,8 @@ export const ACTIONS = {
     VARIABLES_DELETE: 'variables-delete',
     VARIABLES_GET: 'variables-get',
     STOP_APP: 'stop-app',
+    DRAIN: 'drain',
+    UNDRAIN: 'undrain',
 } as const;
 
 export function variablesGet() {
@@ -106,6 +108,16 @@ export function finishCall(params: any = {}) {
 
 export function pong() {
     return { action: ACTIONS.PONG };
+}
+
+/** Connection-level (no callID): take this connection out of the call carousel. */
+export function drain() {
+    return { action: ACTIONS.DRAIN };
+}
+
+/** Connection-level (no callID): put this connection back into the call carousel. */
+export function undrain() {
+    return { action: ACTIONS.UNDRAIN };
 }
 
 export function startAudioStream() {
